@@ -35,6 +35,7 @@ import {
 } from './components/SecondaryPages';
 import { HotelDetailModal, PlaceDetailModal } from './components/DetailModals';
 import { MyTripDrawer } from './components/MyTripDrawer';
+import { N8nChatbot } from './components/N8nChatbot';
 import { Menu, X } from 'lucide-react';
 
 type MainNavView =
@@ -566,6 +567,8 @@ export default function App() {
         }}
         onSaveTrip={handleSaveTrip}
       />
+
+      <N8nChatbot trip={trip} destination={currentDestination} />
 
       {/* ================================================================== */}
       {/* QUIET FOOTER                                                       */}
