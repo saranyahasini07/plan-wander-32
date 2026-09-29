@@ -1,0 +1,6 @@
+{
+  "name": "Plan & Wander",
+  "description": "Plan the journey. Wander the world. A visual travel planning workspace to explore destinations, compare transport and stays, discover hidden gems, and build AI-organized itineraries.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
