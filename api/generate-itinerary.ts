@@ -25,6 +25,8 @@ export default async function handler(req: any, res: any) {
   const webhookUrl = process.env.N8N_WEBHOOK_URL?.trim();
   if (webhookUrl && webhookUrl.startsWith('http')) {
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5500);
       const webhookRes = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -41,14 +43,23 @@ export default async function handler(req: any, res: any) {
           activities,
           preferences,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       if (webhookRes.ok) {
         const webhookData = await webhookRes.json();
-        return res.status(200).json({
-          ...baseItinerary,
-          ...webhookData,
-          generatedBy: 'n8n-webhook',
-        });
+        if (
+          webhookData &&
+          typeof webhookData === 'object' &&
+          webhookData.whyThisFitsYou &&
+          !/error in workflow/i.test(String(webhookData.whyThisFitsYou))
+        ) {
+          return res.status(200).json({
+            ...baseItinerary,
+            ...webhookData,
+            generatedBy: 'n8n-webhook',
+          });
+        }
       }
     } catch {
       // Fallback to Gemini or local smart itinerary

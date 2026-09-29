@@ -1,5 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Destination, TripState } from '../types/travel';
+import {
+  getActivitiesForDestination,
+  getHotelsForDestination,
+  getPlacesForDestination,
+  getRestaurantsForDestination,
+  getTransportOptionsForRoute,
+} from '../data/destinations';
 import { MessageSquare, X, Send, RotateCcw, Minimize2 } from 'lucide-react';
 
 const N8N_WEBHOOK_CHAT_URL =
@@ -29,6 +36,106 @@ function getOrCreateSessionId(): string {
   }
 }
 
+function isErrorWorkflowText(statusOk: boolean, text: string): boolean {
+  if (!statusOk) return true;
+  const trimmed = (text || '').trim();
+  if (!trimmed) return true;
+  return /^(error in workflow|problem running workflow|workflow could not be started|internal server error|error:)/i.test(
+    trimmed
+  );
+}
+
+function generateClientCatalogReply(
+  question: string,
+  trip: TripState,
+  destination: Destination
+): string {
+  const q = question.toLowerCase();
+  const dep = trip.departureCity || 'Visakhapatnam';
+  const places = getPlacesForDestination(destination);
+  const gems = places.filter((p) => p.isHiddenGem);
+  const popular = places.filter((p) => !p.isHiddenGem);
+  const hotels = getHotelsForDestination(destination);
+  const restaurants = getRestaurantsForDestination(destination);
+  const activities = getActivitiesForDestination(destination);
+  const transports = getTransportOptionsForRoute(dep, destination);
+
+  if (q.includes('hidden gem') || q.includes('secret') || q.includes('less crowded')) {
+    const gemLines = gems
+      .map(
+        (g) =>
+          `• ${g.name} (${g.entryFee === 0 ? 'Free Entry' : `₹${g.entryFee}`} · Best time: ${
+            g.bestTimeToVisit
+          }) — ${g.shortDescription}`
+      )
+      .join('\n');
+    return `Here are the top Hidden Gems in ${destination.name}:\n\n${gemLines}\n\nYou can add any of these to your My Trip basket in Step 4 (Discover Places).`;
+  }
+
+  if (
+    q.includes('flight') ||
+    q.includes('train') ||
+    q.includes('bus') ||
+    q.includes('transport') ||
+    q.includes('travel from') ||
+    q.includes('reach')
+  ) {
+    const topTrans = transports
+      .slice(0, 4)
+      .map(
+        (t) =>
+          `• ${t.category}: ${t.operator} (${t.departureTime} → ${t.arrivalTime}, ${
+            t.durationLabel
+          }) — ₹${t.price.toLocaleString('en-IN')}/person`
+      )
+      .join('\n');
+    return `Best ways to travel for ${dep} → ${destination.name}:\n\n${topTrans}\n\nCompare and select your preferred option in Step 2 (Compare Transport).`;
+  }
+
+  if (q.includes('hotel') || q.includes('stay') || q.includes('resort') || q.includes('room')) {
+    const topHotels = hotels
+      .slice(0, 4)
+      .map(
+        (h) =>
+          `• ${h.name} (${h.tier}) — ₹${h.pricePerNight.toLocaleString('en-IN')}/night · ★ ${h.rating.toFixed(
+            1
+          )}`
+      )
+      .join('\n');
+    return `Top stays in ${destination.name} across budget tiers:\n\n${topHotels}\n\nView full details and select your stay in Step 3 (Pick Your Stay).`;
+  }
+
+  if (q.includes('food') || q.includes('restaurant') || q.includes('eat') || q.includes('cafe') || q.includes('dinner')) {
+    const topFood = restaurants
+      .slice(0, 4)
+      .map(
+        (r) =>
+          `• ${r.name} (${r.category} · ${r.cuisine}) — ~₹${r.averageCostPerPerson}/person · Try: ${r.signatureDish}`
+      )
+      .join('\n');
+    return `Must-try dining spots in ${destination.name}:\n\n${topFood}`;
+  }
+
+  if (q.includes('weather') || q.includes('best time') || q.includes('season') || q.includes('month')) {
+    return `Seasonal guide for ${destination.name}:\n\n• Best Months: ${destination.seasonal.bestMonths}\n• Temperature: ${destination.seasonal.temperatureRange}\n• Weather: ${destination.seasonal.weatherSummary}\n• Savings Tip: ${destination.seasonal.priceDifferenceNote}`;
+  }
+
+  // Default: Multi-day itinerary summary using real destination places & activities
+  return `Here is a recommended ${trip.durationDays}-Day plan for ${dep} → ${
+    destination.name
+  } (Target budget: ₹${trip.targetBudget.toLocaleString('en-IN')}):\n\n• Day 1: Arrive from ${dep}, check into ${
+    trip.selectedHotel?.name || hotels[2]?.name
+  }, lunch at ${restaurants[0]?.name}, and sunset at ${popular[0]?.name}.\n• Day 2: Morning visit to ${
+    popular[1]?.name
+  }, afternoon at ${popular[2]?.name}, and ${activities[0]?.name}.\n• Day 3: Discover hidden gems including ${
+    gems[0]?.name
+  } and ${gems[1]?.name}, followed by dinner at ${restaurants[2]?.name}.\n${
+    trip.durationDays >= 4
+      ? `• Day ${trip.durationDays}: Morning ${activities[1]?.name}, local market shopping, and return journey to ${dep}.`
+      : ''
+  }`;
+}
+
 export const N8nChatbot: React.FC<N8nChatbotProps> = ({ trip, destination }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [sessionId, setSessionId] = useState<string>(() => getOrCreateSessionId());
@@ -39,7 +146,7 @@ export const N8nChatbot: React.FC<N8nChatbotProps> = ({ trip, destination }) => 
     {
       id: 'welcome-1',
       role: 'assistant',
-      text: `Hi! I'm your Plan & Wander Travel Assistant powered by n8n. Ask me anything about ${destination.name}, routes from ${trip.departureCity || 'your city'}, hidden gems, hotels, or itinerary ideas!`,
+      text: `Hi! I'm your Plan & Wander Travel Assistant. Ask me anything about ${destination.name}, routes from ${trip.departureCity || 'your city'}, hidden gems, hotels, or itinerary ideas!`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
@@ -67,26 +174,44 @@ export const N8nChatbot: React.FC<N8nChatbotProps> = ({ trip, destination }) => 
     if (!rawMessageText) setInput('');
     setIsLoading(true);
 
-    const enrichedInput = includeTripContext
-      ? `${textToSend}\n\n[Current Trip Context: ${trip.departureCity || 'Visakhapatnam'} -> ${destination.name}, ${trip.durationDays} days, ${trip.adults} adults, Target Budget: ₹${trip.targetBudget}, Selected Stay: ${trip.selectedHotel?.name || 'None'}, Selected Places: ${trip.selectedPlaces.map((p) => p.name).join(', ') || 'None'}]`
-      : textToSend;
+    const destPlaces = getPlacesForDestination(destination);
+    const destHotels = getHotelsForDestination(destination);
+    const destTransports = getTransportOptionsForRoute(trip.departureCity, destination);
 
     const payload = {
       action: 'sendMessage',
       sessionId,
-      chatInput: enrichedInput,
+      chatInput: textToSend,
       metadata: {
         destination: destination.name,
-        departureCity: trip.departureCity,
+        departureCity: trip.departureCity || 'Visakhapatnam',
         durationDays: trip.durationDays,
         targetBudget: trip.targetBudget,
+        includeTripContext,
+        hotelsSummary:
+          trip.selectedHotel?.name ||
+          destHotels
+            .slice(0, 3)
+            .map((h) => `${h.name} (₹${h.pricePerNight}/n)`)
+            .join(', '),
+        placesSummary:
+          trip.selectedPlaces.length > 0
+            ? trip.selectedPlaces.map((p) => p.name).join(', ')
+            : destPlaces
+                .slice(0, 5)
+                .map((p) => p.name)
+                .join(', '),
+        transportSummary: destTransports
+          .slice(0, 3)
+          .map((t) => `${t.category}: ${t.operator} (₹${t.price})`)
+          .join(', '),
       },
     };
 
     let replyText = '';
 
     try {
-      // 1. Try server-side proxy first to avoid any browser CORS issues
+      // 1. Call backend /api/n8n-chat (which tries n8n webhook -> Gemini AI -> smart fallback)
       const proxyRes = await fetch('/api/n8n-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,58 +220,75 @@ export const N8nChatbot: React.FC<N8nChatbotProps> = ({ trip, destination }) => 
 
       if (proxyRes.ok) {
         const data = await proxyRes.json();
-        replyText = data.output || '';
-      } else {
-        throw new Error(`Proxy status ${proxyRes.status}`);
+        if (data?.output && !isErrorWorkflowText(true, data.output)) {
+          replyText = data.output;
+        }
       }
     } catch {
-      // 2. Fallback: Direct browser POST to n8n Chat Trigger webhook URL
+      // Proceed to direct webhook or client fallback
+    }
+
+    if (!replyText) {
       try {
-        const directRes = await fetch(N8N_WEBHOOK_CHAT_URL, {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5500);
+        const directRes = await fetch(`${N8N_WEBHOOK_CHAT_URL}?action=sendMessage`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json, text/plain, */*',
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            action: 'sendMessage',
+            sessionId,
+            chatInput: textToSend,
+          }),
+          signal: controller.signal,
         });
+        clearTimeout(timer);
 
         const rawText = await directRes.text();
+        let candidate = '';
         try {
           const parsed = JSON.parse(rawText);
           if (typeof parsed === 'string') {
-            replyText = parsed;
+            candidate = parsed;
           } else if (Array.isArray(parsed) && parsed.length > 0) {
-            replyText =
+            candidate =
               parsed[0]?.output ||
               parsed[0]?.text ||
               parsed[0]?.response ||
               parsed[0]?.message ||
-              JSON.stringify(parsed[0]);
+              '';
           } else if (parsed && typeof parsed === 'object') {
-            replyText =
+            candidate =
               parsed.output ||
               parsed.text ||
               parsed.response ||
-              parsed.message ||
               parsed.reply ||
+              (directRes.ok ? parsed.message : '') ||
               '';
           }
         } catch {
-          replyText = rawText;
+          candidate = directRes.ok ? rawText : '';
+        }
+
+        if (!isErrorWorkflowText(directRes.ok, candidate)) {
+          replyText = candidate;
         }
       } catch {
-        replyText =
-          'Could not reach the n8n workflow right now. Please verify that your n8n cloud workflow is active.';
+        // Use local catalog responder below
       }
+    }
+
+    if (!replyText) {
+      replyText = generateClientCatalogReply(textToSend, trip, destination);
     }
 
     const botMsg: ChatMessage = {
       id: `bot-${Date.now()}`,
       role: 'assistant',
-      text:
-        replyText?.trim() ||
-        'Received response from n8n workflow. Let me know how else I can help plan your trip!',
+      text: replyText.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
@@ -193,7 +335,7 @@ export const N8nChatbot: React.FC<N8nChatbotProps> = ({ trip, destination }) => 
                 </span>
               </div>
               <div className="text-[11px] text-slate-300">
-                Connected to n8n Agent · {destination.name}
+                AI Travel Concierge · {destination.name}
               </div>
             </div>
 
